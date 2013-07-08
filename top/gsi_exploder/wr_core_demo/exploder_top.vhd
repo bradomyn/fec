@@ -9,6 +9,7 @@ use work.wr_fabric_pkg.all;
 use work.wishbone_pkg.all;
 use work.wb_cores_pkg_gsi.all;
 use work.eca_pkg.all;
+use work.fec_pkg.all;
 use work.wr_altera_pkg.all;
 use work.altera_flash_pkg.all;
 use work.etherbone_pkg.all;
@@ -314,7 +315,7 @@ architecture rtl of exploder_top is
   constant c_wrcore_bridge_sdb : t_sdb_bridge := f_xwb_bridge_manual_sdb(x"0003ffff", x"00030000");
   
   -- Top crossbar layout
-  constant c_slaves  : natural := 6;
+  constant c_slaves  : natural := 7;
   constant c_masters : natural := 3;
   constant c_layout : t_sdb_record_array(c_slaves-1 downto 0) :=
    (0 => f_sdb_embed_bridge(c_wrcore_bridge_sdb,          x"00000000"),
@@ -322,7 +323,8 @@ architecture rtl of exploder_top is
     2 => f_sdb_embed_device(c_eca_sdb,                    x"00100800"),
     3 => f_sdb_embed_device(c_eca_evt_sdb,                x"00100C00"),
     4 => f_sdb_embed_device(c_wb_serial_lcd_sdb,          x"00100D00"),
-    5 => f_sdb_embed_device(c_wb_spi_flash_sdb,           x"01000000"));
+    5 => f_sdb_embed_device(c_wb_spi_flash_sdb,           x"01000000"),
+    6 => f_sdb_embed_device(c_xwr_wb_fec_sdb,             x"00100E00"));
   constant c_sdb_address : t_wishbone_address := x"00300000";
 
   signal cbar_slave_i  : t_wishbone_slave_in_array (c_masters-1 downto 0);
@@ -388,6 +390,11 @@ architecture rtl of exploder_top is
   signal mb_src_in     : t_wrf_source_in;
   signal mb_snk_out    : t_wrf_sink_out;
   signal mb_snk_in     : t_wrf_sink_in;
+  
+  signal mc_src_out    : t_wrf_source_out;
+  signal mc_src_in     : t_wrf_source_in;
+  signal mc_snk_out    : t_wrf_sink_out;
+  signal mc_snk_in     : t_wrf_sink_in;
   
   signal tm_up     : std_logic;
   signal tm_valid  : std_logic;
@@ -636,6 +643,32 @@ begin
       rst_n_i    => rstn_sys,
       pulse_i    => pps,
       extended_o => ext_pps);
+
+--wr_core                                 FEC                              etherbone
+--=====================================================================================
+--wrf_src_o =>  mb_snk_in  <= fec_wr_snk_i | fec_eb_snk_i  =>   mc_src_out  <=   src_out 
+--wrf_src_i =>  mb_snk_out <= fec_wr_snk_o | fec_eb_snk_o  =>   mc_src_in   <=   src_in      
+--wrf_snk_o =>  mb_src_in  <= fec_wr_src_i | fec_eb_src_i  =>   mc_snk_out  <=   snk_out
+--wrf_snk_i =>  mb_src_out <= fec_wr_src_o | fec_eb_src_o  =>   mc_snk_in   <=   snk_in
+
+  U_FEC  : xwb_fec
+  port map (
+      clk_i       => clk_sys,
+      nRst_i      => rstn_sys,
+      
+      c_slave_i   => cbar_master_o(6),
+      c_slave_o   => cbar_master_i(6),
+ 
+      fec_wr_snk_i   => mb_snk_in,
+      fec_wr_snk_o   => mb_snk_out,
+      fec_wr_src_i   => mb_src_in,
+      fec_wr_src_o   => mb_src_out,
+
+      fec_eb_snk_i   => mc_src_out,
+      fec_eb_snk_o   => mc_src_in,
+      fec_eb_src_i   => mc_snk_out,
+      fec_eb_src_o   => mc_snk_in);
+
   
   U_ebone : eb_ethernet_slave
     generic map(
@@ -643,10 +676,10 @@ begin
     port map(
       clk_i       => clk_sys,
       nRst_i      => rstn_sys,
-      snk_i       => mb_snk_in,
-      snk_o       => mb_snk_out,
-      src_o       => mb_src_out,
-      src_i       => mb_src_in,
+      snk_i       => mc_snk_in,
+      snk_o       => mc_snk_out,
+      src_o       => mc_src_out,
+      src_i       => mc_src_in,
       cfg_slave_o => wrc_master_i,
       cfg_slave_i => wrc_master_o,
       master_o    => cbar_slave_i(1),
